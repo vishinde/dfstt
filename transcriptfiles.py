@@ -23,6 +23,7 @@ from apache_beam.options.pipeline_options import GoogleCloudOptions
 from apache_beam.options.pipeline_options import StandardOptions
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.options.pipeline_options import SetupOptions
+from apache_beam.options.pipeline_options import WorkerOptions
 from apache_beam.io.textio import WriteToText
 from apache_beam.ml.inference.base import RunInference
 from apache_beam.ml.inference.base import ModelHandler
@@ -117,33 +118,7 @@ class RemoteModelHandler(ModelHandler[str,
           batch_recognize_results = cloud_speech.BatchRecognizeResults.from_json(
               results_bytes, ignore_unknown_fields=True
           )
-          strlines = ""
-          for result in batch_recognize_results.results:
-            #print(f"Transcript: {result.alternatives[0].transcript}")
-            strlines += result.alternatives[0].transcript
-            print(f"strlines: {strlines}")
-          #print(f"file_uri is",file_uri)
-          data[file_name] = strlines
-          print(f"data is {data}")
-          return [data]
-
-class GcsWrite(beam.DoFn):
-  def setup(self):
-    self._client = storage.Client()
-
-  def process(self, file_name_contents_tuple):
-    tuple = list(file_name_contents_tuple)
-    k1 = tuple[0]
-    v1 = file_name_contents_tuple[k1]
-    #print(f"key is ",k1)
-    #print(f"value is ",file_name_contents_tuple[k1])
-
-    # file_name_contents_tuple is whatever you outputed from the run_inference function
-    bucket = self._client.bucket(gcs_bucket)
-    file_path = gcs_output_object + "/" + k1 + ".txt"
-    blob = bucket.blob(file_path)
-    with blob.open("w") as f:
-        f.write(v1)
+          return None
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--project',required=True, help='Specify Google Cloud project')
@@ -152,7 +127,10 @@ parser.add_argument('--stagingLocation', required=True, help='Specify Cloud Stor
 parser.add_argument('--tempLocation', required=True, help='Specify Cloud Storage bucket for temp')
 parser.add_argument('--runner', required=True, help='Specify Apache Beam Runner')
 parser.add_argument('--requirements_file', required=True, help='Specify requirements file')
+parser.add_argument('--save_main_session', required=False, help='Specify main session')
 #parser.add_argument('--job_name', required=True, help='Specify job name')
+parser.add_argument('--network', required=True, help='Specify requirements file')
+parser.add_argument('--subnetwork', required=True, help='Specify requirements file')
 
 opts = parser.parse_args()
 
@@ -165,12 +143,14 @@ options.view_as(GoogleCloudOptions).temp_location = opts.tempLocation
 options.view_as(GoogleCloudOptions).job_name = '{0}{1}'.format('my-pipeline-',time.time_ns())
 options.view_as(StandardOptions).runner = opts.runner
 options.view_as(SetupOptions).requirements_file = opts.requirements_file
+options.view_as(SetupOptions).save_main_session = True #opts.save_main_session
 #options.view_as(GoogleCloudOptions).job_name = opts.job_name
-
+options.view_as(WorkerOptions).network = opts.network
+options.view_as(WorkerOptions).subnetwork = opts.subnetwork
 
 pipeline = beam.Pipeline(options=options)
 (pipeline | "Create inputs" >> beam.Create(gcs_files)
- | "Inference" >> RunInference(RemoteModelHandler())
- | "Write Files" >> beam.ParDo(GcsWrite()))
+ | "Inference" >> RunInference(RemoteModelHandler()))
+ #| "Write Files" >> beam.ParDo(GcsWrite()))
 
 pipeline.run()
